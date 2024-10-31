@@ -63,13 +63,16 @@ class Index:
 
 
     # still don't know if we have to remove them of not
-    def remove_stop_words(self, stop_words=None):
+    def remove_stop_words(self):
+        self.stop_words = {'and', 'then', 'this', 'it', 'or', 'for', 'the', 'a', 'is', 'are', 'was', 'do', 'does',
+                           'did'}
+
         filtered_docs = []
         for doc_name, tokens in self.tokenized_docs:
-            filtered_tokens = [token for token in tokens if token not in stop_words]
+            filtered_tokens = [token for token in tokens if token not in self.stop_words]
             filtered_docs.append((doc_name, filtered_tokens))
         self.tokenized_docs = filtered_docs
-        return self.tokenized_docs
+        return self.tokenized_docss
 
 
 class Boolean:
@@ -143,47 +146,43 @@ class System:
 
     @staticmethod
     def parse_query(query):
-        precedence = {}
-        precedence['NOT'] = 3
-        precedence['AND'] = 2
-        precedence['OR'] = 1
-        precedence['('] = 0
-        precedence[')'] = 0
-
+        precedence = {'NOT': 3, 'AND': 2, 'OR': 1, '(': 0, ')': 0}
         output = []
         operators = []
 
-        for token in query:
+        tokens = query.split()  # Tokenize the query by spaces
+
+        for token in tokens:
             if token == '(':
                 operators.append(token)
-
             elif token == ')':
-                operator = operators.pop()
-                while operator != '(':
-                    output.append(operator)
-                    operator = operator.pop()
-
+                # Pop operators until finding the opening parenthesis
+                while operators and operators[-1] != '(':
+                    output.append(operators.pop())
+                operators.pop()  # Remove the '('
             elif token in precedence:
-                if operators:
-                    current_operator = operators[-1]
-                    while operators and precedence[current_operator] > precedence[token]:
-                        output.append(operators.pop())
-                        if operators:
-                            current_operator = operators[-1]
+                while (operators and operators[-1] != '(' and
+                       precedence[operators[-1]] >= precedence[token]):
+                    output.append(operators.pop())
                 operators.append(token)
             else:
+                # Only add recognized tokens (terms) to the output
                 output.append(token.lower())
 
-            while operators:
-                output.append(operators.pop())
+        # Pop any remaining operators in the stack
+        while operators:
+            output.append(operators.pop())
 
-            return output
+        return output
 
     def process_query(self, query):
+        # Check if query contains any Boolean operators; if not, return empty result
+        if not any(op in query for op in ['AND', 'OR', 'NOT']):
+            return []
 
         postfix_query = self.parse_query(query)
         stack = []
-        all_docs = set(self.boolean_model.inverted_index.keys())
+        all_docs = set(doc for docs in self.boolean_model.inverted_index.values() for doc in docs)
 
         for token in postfix_query:
             if token in {'AND', 'OR', 'NOT'}:
@@ -199,10 +198,10 @@ class System:
                         result = self.boolean_model.or_operation(left, right)
                 stack.append(result)
             else:
+                # Retrieve documents list for the term or an empty list if the term is not in the index
                 stack.append(self.boolean_model.inverted_index.get(token, []))
 
         return stack.pop() if stack else []
-
 
 '''
 class VSM:
@@ -313,7 +312,6 @@ if __name__ == "__main__":
 
     documents = index.get_docs()
     tokenized_docs = index.tokenization(documents)
-    filtered_docs = index.remove_stop_words()
     vocabulary = index.get_vocabulary()
 
     print("Inverted Index for the Boolean model:")
@@ -321,14 +319,14 @@ if __name__ == "__main__":
     for term, doc_list in inverted_ind.items():
         print(f"'{term}': {doc_list}")
 
-    print("Inverted Index for the SVM model: ")
-    inverted_weigh_ind = index.weighted_inverted_index()
-    for term, doc_list in inverted_weigh_ind.items():
-        print(f"'{term}': {doc_list}")
+ #   print("Inverted Index for the SVM model: ")
+   # inverted_weigh_ind = index.weighted_inverted_index()
+ #   for term, doc_list in inverted_weigh_ind.items():
+   #     print(f"'{term}': {doc_list}")
 
     boolean_model = Boolean(inverted_ind)
     system = System(boolean_model)
 
-    query = "inhalations AND mucolytic"
+    query = 'cf AND read'
     result = system.process_query(query)
     print(f"Documents matching query '{query}': {result}")

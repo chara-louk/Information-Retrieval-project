@@ -203,109 +203,70 @@ class System:
 
         return stack.pop() if stack else []
 
-'''
 class VSM:
-    def __init__(self, inverted_index,vocabulary):
-        self.doc_vectors = {}
-        self.term_indices = {}
+    def __init__(self, inverted_index, vocabulary, total_docs):
         self.inverted_index = inverted_index
         self.vocabulary = list(vocabulary)
+        self.doc_vectors = self.initialize_doc_vectors()
+        self.term_indices = {term: idx for idx, term in enumerate(self.vocabulary)}
+        self.total_docs = total_docs
+        self.calculate_tf()
+        self.idf = self.calculate_idf()
+        self.calculate_tf_idf()
 
-    def document_vectors(self):
+    def initialize_doc_vectors(self):
+        # Create a vector of zeroes for each document in the collection
         doc_ids = {doc_id for postings in self.inverted_index.values() for doc_id, _ in postings}
-        doc_vectors = {}
-        term_indices = {}
-        for doc_id in doc_ids:
-            doc_vector = [0] * len(self.vocabulary)
-            doc_vectors[doc_id] = doc_vector
-
-        # map each term in vocabulary with index position
-        for i, term in enumerate(self.vocabulary):
-            term_indices[term] = i
-
-        # map each term of the inverted index to the documents they appear
-        for term, postings in self.inverted_index.items():
-            term_index = term_indices[term]
-
-            # evey index of the vector has the count of each term in the document
-            for doc_id, count in postings:
-                doc_vectors[doc_id][term_index] = count
-
-        self.doc_vectors = doc_vectors
-        self.term_indices = term_indices
-        return doc_vectors
+        return {doc_id: [0] * len(self.vocabulary) for doc_id in doc_ids}
 
     def calculate_tf(self):
-        # find the total number of terms in each doc, to calculate tf = freq / total count
-        for doc_id, term_counts in self.inverted_index.items():
-            total_terms = sum(count for term, count in term_counts)
-
-            for term, count in term_counts:
+        # Populate document vectors with TF values
+        for term, postings in self.inverted_index.items():
+            for doc_id, count in postings:
                 if term in self.term_indices:
                     term_index = self.term_indices[term]
-                    tf = count / total_terms
-                    self.doc_vectors[doc_id][term_index] = tf
+                    self.doc_vectors[doc_id][term_index] = count  # Raw TF
 
-        return self.doc_vectors
-
-    @staticmethod
-    def calculate_idf(inverted_index, total_docs):
+    def calculate_idf(self):
+        # Calculate IDF for each term in vocabulary
         idf = {}
-        for term in inverted_index:
-            doc_freq = len(inverted_index[term])
-            idf[term] = math.log((total_docs + 1) / (doc_freq + 1)) + 1
+        for term, postings in self.inverted_index.items():
+            doc_freq = len(postings)
+            idf[term] = math.log((self.total_docs + 1) / (doc_freq + 1)) + 1  # Smooth IDF
         return idf
 
     def calculate_tf_idf(self):
-        total_docs = len(self.doc_vectors)
-        idf = self.calculate_idf(self.inverted_index, total_docs)
-
+        # Multiply TF by IDF for each document vector term
         for doc_id, vector in self.doc_vectors.items():
             for term, term_index in self.term_indices.items():
-                tf_idf_value = vector[term_index] * idf[term]
+                tf_idf_value = vector[term_index] * self.idf.get(term, 0)
                 vector[term_index] = tf_idf_value
 
-        return self.doc_vectors
-
-    # process the query to create the query vector
-    @staticmethod
-    def query_processing(query, stopwords):
-        query = re.sub('\W', ' ', query)
-        query = query.strip().lower()
-        query = " ".join([word for word in query.split() if word not in stopwords])
-        return query
-
-    def calculate_query_tf(self, query):
-        query_terms = query.split()
-        tf = {}
-        total_terms = len(query_terms)
-        for term in query_terms:
-            if term in self.vocabulary:
-                if term not in tf:
-                    tf[term] = 0
-                tf[term] += 1
+    def process_query(self, query):
+        # Clean and process the query
+        query = re.sub(r'\W', ' ', query)
+        query_terms = [word for word in query.lower().split()]
+        tf = {term: query_terms.count(term) for term in set(query_terms) if term in self.vocabulary}
         return tf
 
-    def calculate_query_idf(self, query):
-        idf = {}
-        query_terms = query.split()
-        for term in query_terms:
-            if term in self.vocabulary:
-                df = len(self.inverted_index[term]) 
-                idf[term] = math.log((self.total_docs + 1) / (df + 1)) + 1
-        return idf
+    def query_vector(self, query):
+        # Convert query TF values to vector format
+        tf = self.process_query(query)
+        query_vector = [tf.get(term, 0) * self.idf.get(term, 0) for term in self.vocabulary]
+        return query_vector
 
-    def calculate_query_tf_idf(self, query):
-        tf = self.calculate_query_tf(query)
-        idf = self.calculate_query_idf(query)
+    def cosine_similarity(self, vec1, vec2):
+        # Calculate cosine similarity between two vectors
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        magnitude1 = math.sqrt(sum(a * a for a in vec1))
+        magnitude2 = math.sqrt(sum(b * b for b in vec2))
+        return dot_product / (magnitude1 * magnitude2) if magnitude1 and magnitude2 else 0
 
-        tf_idf = {}
-        for term in tf:
-            tf_idf[term] = tf[term] * idf[term]
-
-        return tf_idf
-
-'''
+    def rank_documents(self, query):
+        # Rank documents based on cosine similarity to the query vector
+        query_vector = self.query_vector(query)
+        scores = {doc_id: self.cosine_similarity(query_vector, doc_vector) for doc_id, doc_vector in self.doc_vectors.items()}
+        return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 if __name__ == "__main__":
     index = Index()
@@ -319,14 +280,26 @@ if __name__ == "__main__":
     for term, doc_list in inverted_ind.items():
         print(f"'{term}': {doc_list}")
 
- #   print("Inverted Index for the SVM model: ")
-   # inverted_weigh_ind = index.weighted_inverted_index()
- #   for term, doc_list in inverted_weigh_ind.items():
-   #     print(f"'{term}': {doc_list}")
+    print("Inverted Index for the SVM model: ")
+    inverted_weigh_ind = index.weighted_inverted_index()
+    total_docs = len(tokenized_docs)
+    for term, doc_list in inverted_weigh_ind.items():
+        print(f"'{term}': {doc_list}")
+
+    # Initialize VSM and calculate document vectors
+    vsm = VSM(inverted_weigh_ind, vocabulary, total_docs)
+
+    # Read and process each query in 'queries.txt'
+    with open('collection/Queries.txt', 'r') as f:
+        for line in f:
+            line = line.strip()
+            ranked_docs = vsm.rank_documents(line)
+            print(f"Results for query '{line}': {ranked_docs[:10]}")  # Show top 10 documents
+
 
     boolean_model = Boolean(inverted_ind)
     system = System(boolean_model)
 
     query = 'cf AND read'
     result = system.process_query(query)
-    print(f"Documents matching query '{query}': {result}")
+ #   print(f"Documents matching query '{query}': {result}")

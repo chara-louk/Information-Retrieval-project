@@ -61,18 +61,17 @@ class Index:
                         self.svm_inverted_index[term].append((docID, term_count))
         return self.svm_inverted_index
 
-
     # still don't know if we have to remove them of not
     def remove_stop_words(self):
         self.stop_words = {'and', 'then', 'this', 'it', 'or', 'for', 'the', 'a', 'is', 'are', 'was', 'do', 'does',
-                           'did'}
+                           'did', 'what'}
 
         filtered_docs = []
         for doc_name, tokens in self.tokenized_docs:
             filtered_tokens = [token for token in tokens if token not in self.stop_words]
             filtered_docs.append((doc_name, filtered_tokens))
         self.tokenized_docs = filtered_docs
-        return self.tokenized_docss
+        return self.tokenized_docs
 
 
 class Boolean:
@@ -81,7 +80,6 @@ class Boolean:
 
     @staticmethod
     def and_operation(post_list1, post_list2):
-        # merge algorithm
         result = []
         l_index = 0
         r_index = 0
@@ -90,24 +88,20 @@ class Boolean:
             l_item = post_list1[l_index]
             r_item = post_list2[r_index]
 
-            #if the values match (docID1 = docID2)
             if l_item == r_item:
                 result.append(l_item)
                 l_index += 1
                 r_index += 1
-
-            #if docID1>docID2
             elif l_item > r_item:
-                r_index +=1
+                r_index += 1
             else:
-                l_index +=1
+                l_index += 1
 
         return result
 
     @staticmethod
     def or_operation(post_list1, post_list2):
-        # merge algorithm
-        result = []
+        result = set()
         l_index = 0
         r_index = 0
 
@@ -115,93 +109,96 @@ class Boolean:
             l_item = post_list1[l_index]
             r_item = post_list2[r_index]
 
-            # if the values match (docID1 = docID2)
             if l_item == r_item:
-                result.append(l_item)
+                result.add(l_item)
                 l_index += 1
                 r_index += 1
 
-            # if docID1>docID2
             elif l_item > r_item:
-                result.append(r_item)
+                result.add(r_item)
                 r_index += 1
 
-            elif l_item < r_item:
-                result.append(l_item)
+            else:
+                result.add(l_item)
                 l_index += 1
 
-        return result
+        while l_index < len(post_list1):
+            result.add(post_list1[l_index])
+            l_index += 1
+        while r_index < len(post_list2):
+            result.add(post_list2[r_index])
+            r_index += 1
+
+        return sorted(result)
 
     @staticmethod
     def not_operation(docs, post_list):
-        result = []
-        for doc in docs:
-            if doc not in post_list:
-                result.append(doc)
-        return result
-
-class System:
-    def __init__(self, boolean_model):
-        self.boolean_model = boolean_model
+        return [doc for doc in docs if doc not in post_list]
 
     @staticmethod
     def parse_query(query):
         precedence = {'NOT': 3, 'AND': 2, 'OR': 1, '(': 0, ')': 0}
         output = []
         operators = []
-
-        tokens = query.split()  # Tokenize the query by spaces
+        normalized_query = query.upper().replace(' AND ', ' AND ').replace(' OR ', ' OR ').replace(' NOT ', ' NOT ')
+        tokens = normalized_query.split()
 
         for token in tokens:
             if token == '(':
                 operators.append(token)
             elif token == ')':
-                # Pop operators until finding the opening parenthesis
                 while operators and operators[-1] != '(':
                     output.append(operators.pop())
                 operators.pop()  # Remove the '('
             elif token in precedence:
-                while (operators and operators[-1] != '(' and
-                       precedence[operators[-1]] >= precedence[token]):
+                while operators and operators[-1] != '(' and precedence[operators[-1]] >= precedence[token]:
                     output.append(operators.pop())
                 operators.append(token)
             else:
-                # Only add recognized tokens (terms) to the output
-                output.append(token.lower())
+                output.append(token.lower())  # Add term in lowercase
 
-        # Pop any remaining operators in the stack
         while operators:
             output.append(operators.pop())
 
         return output
 
-    def process_query(self, query):
-        # Check if query contains any Boolean operators; if not, return empty result
-        if not any(op in query for op in ['AND', 'OR', 'NOT']):
-            return []
+    @staticmethod
+    def process_natural_query(natural_query):
+        keywords = natural_query.split()
+        logical_query = ' AND '.join(keywords)
+        return Boolean.parse_query(logical_query)
 
-        postfix_query = self.parse_query(query)
+    def process_query(self, query):
+        normalized_query = query.strip()
+
+        if any(op in normalized_query.upper() for op in ['AND', 'OR', 'NOT']):
+            postfix_query = self.parse_query(normalized_query)
+        else:
+            postfix_query = self.process_natural_query(normalized_query)
+
         stack = []
-        all_docs = set(doc for docs in self.boolean_model.inverted_index.values() for doc in docs)
+        result = []
+        all_docs = set(doc for docs in self.inverted_index.values() for doc in docs)
 
         for token in postfix_query:
             if token in {'AND', 'OR', 'NOT'}:
                 if token == 'NOT':
                     doc_list = stack.pop()
-                    result = self.boolean_model.not_operation(all_docs, doc_list)
+                    result = self.not_operation(all_docs, doc_list)
+                    stack.append(result)
                 else:
                     right = stack.pop()
                     left = stack.pop()
                     if token == 'AND':
-                        result = self.boolean_model.and_operation(left, right)
+                        result = self.and_operation(left, right)
                     elif token == 'OR':
-                        result = self.boolean_model.or_operation(left, right)
+                        result = self.or_operation(left, right)
                 stack.append(result)
             else:
-                # Retrieve documents list for the term or an empty list if the term is not in the index
-                stack.append(self.boolean_model.inverted_index.get(token, []))
+                stack.append(self.inverted_index.get(token.lower(), []))
 
         return stack.pop() if stack else []
+
 
 class VSM:
     def __init__(self, inverted_index, vocabulary, total_docs):
@@ -268,6 +265,74 @@ class VSM:
         scores = {doc_id: self.cosine_similarity(query_vector, doc_vector) for doc_id, doc_vector in self.doc_vectors.items()}
         return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
+class Evaluation:
+    def __init__(self, model, queries, relevant_docs):
+        self.model = model
+        self.queries = queries
+        self.relevant_docs_file = relevant_docs
+
+    @staticmethod
+    def load_queries(queries_file):
+        queries = []
+        try:
+            with open(queries_file, 'r') as f:
+                queries = [line.strip() for line in f.readlines() if line.strip()]
+        except Exception as e:
+            print("Error loading queries: {e}")
+        return queries
+
+    @staticmethod
+    def load_relevant_docs(relevant_docs_file):
+        relevant_docs = {}
+        try:
+            with open(relevant_docs_file, 'r') as f:
+                for query_id, line in enumerate(f, start=1):
+                    doc_ids = line.strip().split()
+                    relevant_docs[str(query_id)] = doc_ids
+        except Exception as e:
+            print("Error loading relevant docs: {e}")
+        return relevant_docs
+
+    def calculate_recall_precesion(self, retrieved_docs, relevant_docs):
+        # convert the doc ids to integers because they are like '00id' instead of 'id'
+        relevant_set = {int(doc) for doc in relevant_docs}
+        retrieved_set = {int(doc) for doc in retrieved_docs}
+
+        relevant_retrieved = relevant_set.intersection(retrieved_set)
+        # recall is REL ^ RETR / REL and precision is REL ^ RETR / RETR
+        recall = len(relevant_retrieved) / len(relevant_set) if relevant_set else 0.0
+        precision = len(relevant_retrieved) / len(retrieved_set) if retrieved_set else 0.0
+
+        return precision, recall
+
+    def evaluate_models(self):
+        model_results = {}
+
+        for model_name, model in self.model.items():
+            query_results = []
+            for query_id, query in enumerate(self.queries, start=1):
+                if model_name == 'boolean':
+                    retrieved_docs = model.process_query(query)
+                elif model_name == 'vsm':
+                    ranked_docs = model.rank_documents(query)
+                    retrieved_docs = [doc_id for doc_id, _ in ranked_docs]
+
+                relevant_docs = self.relevant_docs_file.get(str(query_id), [])
+                precision, recall = self.calculate_recall_precesion(retrieved_docs, relevant_docs)
+                query_results.append({
+                    'query_id': query_id,
+                    'query': query,
+                    'precision': precision,
+                    'recall': recall,
+                    'retrieved_docs': retrieved_docs,
+                    'relevant_docs': relevant_docs
+                })
+
+            model_results[model_name] = query_results
+
+        return model_results
+
+
 if __name__ == "__main__":
     index = Index()
 
@@ -286,20 +351,25 @@ if __name__ == "__main__":
     for term, doc_list in inverted_weigh_ind.items():
         print(f"'{term}': {doc_list}")
 
-    # Initialize VSM and calculate document vectors
-    vsm = VSM(inverted_weigh_ind, vocabulary, total_docs)
-
-    # Read and process each query in 'queries.txt'
-    with open('collection/Queries.txt', 'r') as f:
-        for line in f:
-            line = line.strip()
-            ranked_docs = vsm.rank_documents(line)
-            print(f"Results for query '{line}': {ranked_docs[:10]}")  # Show top 10 documents
-
-
+    vsm_model = VSM(inverted_weigh_ind, vocabulary, total_docs)
     boolean_model = Boolean(inverted_ind)
-    system = System(boolean_model)
+    test_query = " mucolytic and treatment "
+    test_result = boolean_model.process_query(test_query)
 
-    query = 'cf AND read'
-    result = system.process_query(query)
- #   print(f"Documents matching query '{query}': {result}")
+    print("the docs from boolean are: ", test_result)
+    models = {
+        'boolean': boolean_model,
+        'vsm': vsm_model
+    }
+
+    queries = Evaluation.load_queries('collection/Queries.txt')
+    relevant_docs = Evaluation.load_relevant_docs('collection/Relevant.txt')
+
+    evaluation = Evaluation(models, queries, relevant_docs)
+
+    results = evaluation.evaluate_models()
+
+    for model_name, queries in results.items():
+        print(f"\nModel: {model_name}")
+        for result in queries:
+            print("Query {result['query_id']}: Precision: {result['precision']}, Recall: {result['recall']}, ""Retrieved: {result['retrieved_docs']}, Relevant: {result['relevant_docs']}")

@@ -164,9 +164,28 @@ class Boolean:
 
     @staticmethod
     def process_natural_query(natural_query):
-        keywords = natural_query.split()
-        logical_query = ' AND '.join(keywords)
-        return Boolean.parse_query(logical_query)
+        tokens = natural_query.lower().split()  # Split query into words
+        logical_query = []
+        last_operator = "AND"  # Default to "AND" between terms
+        skip_next = False  # Flag to skip the next token
+
+        for token in tokens:
+            if token == "or":
+                last_operator = "OR"
+            elif token == "not":
+                skip_next = True
+            else:
+                if skip_next:
+                    skip_next = False
+                    continue
+
+                if logical_query:
+                    logical_query.append(last_operator)
+                logical_query.append(token)
+                last_operator = "AND"
+
+        logical_query_str = " ".join(logical_query)
+        return Boolean.parse_query(logical_query_str)
 
     def process_query(self, query):
         normalized_query = query.strip()
@@ -369,7 +388,8 @@ if __name__ == "__main__":
 
     results = evaluation.evaluate_models()
 
-    for model_name, queries in results.items():
+  for model_name, queries in results.items():
         print(f"\nModel: {model_name}")
         for result in queries:
-            print("Query {result['query_id']}: Precision: {result['precision']}, Recall: {result['recall']}, ""Retrieved: {result['retrieved_docs']}, Relevant: {result['relevant_docs']}")
+            print(f"Query {result['query_id']}: Precision: {result['precision']}, Recall: {result['recall']}, "
+                  f"Retrieved: {result['retrieved_docs']}, Relevant: {result['relevant_docs']}")

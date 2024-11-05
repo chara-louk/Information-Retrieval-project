@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import timeit
 
 class Index:
 
@@ -9,7 +10,7 @@ class Index:
         self.svm_inverted_index = {}
         self.tokenized_docs = []
         self.vocabulary = set()
-        self.stop_words = {'and', 'then', 'this', 'it', 'or', 'for', 'the', 'a', 'is', 'are', 'was', 'do', 'does', 'did'}
+        self.stop_words = {'and', 'then', 'this', 'it', 'or', 'for', 'the', 'a', 'is', 'are', 'was', 'do', 'does', 'did', 'how', 'of', 'in'}
 
     def get_docs(self):
         coll_content = []
@@ -149,13 +150,13 @@ class Boolean:
             elif token == ')':
                 while operators and operators[-1] != '(':
                     output.append(operators.pop())
-                operators.pop()  # Remove the '('
+                operators.pop()
             elif token in precedence:
                 while operators and operators[-1] != '(' and precedence[operators[-1]] >= precedence[token]:
                     output.append(operators.pop())
                 operators.append(token)
             else:
-                output.append(token.lower())  # Add term in lowercase
+                output.append(token.lower())
 
         while operators:
             output.append(operators.pop())
@@ -164,25 +165,28 @@ class Boolean:
 
     @staticmethod
     def process_natural_query(natural_query):
-        tokens = natural_query.lower().split()  # Split query into words
+        tokens = natural_query.lower().split()
         logical_query = []
-        last_operator = "AND"  # Default to "AND" between terms
-        skip_next = False  # Flag to skip the next token
+        last_operator = "AND"  # Default operator between terms
 
-        for token in tokens:
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+
             if token == "or":
                 last_operator = "OR"
             elif token == "not":
-                skip_next = True
+                if i + 1 < len(tokens):
+                    logical_query.append("NOT")
+                    logical_query.append(tokens[i + 1])
+                    i += 1
             else:
-                if skip_next:
-                    skip_next = False
-                    continue
-
                 if logical_query:
                     logical_query.append(last_operator)
                 logical_query.append(token)
                 last_operator = "AND"
+
+            i += 1
 
         logical_query_str = " ".join(logical_query)
         return Boolean.parse_query(logical_query_str)
@@ -196,14 +200,21 @@ class Boolean:
             postfix_query = self.process_natural_query(normalized_query)
 
         stack = []
-        result = []
-        all_docs = set(doc for docs in self.inverted_index.values() for doc in docs)
+        all_docs = set(
+            doc for docs in self.inverted_index.values() for doc in docs)  # Ensure all documents are included
 
+        # Evaluate the parsed query in postfix notation
         for token in postfix_query:
             if token in {'AND', 'OR', 'NOT'}:
                 if token == 'NOT':
                     doc_list = stack.pop()
-                    result = self.not_operation(all_docs, doc_list)
+
+                    if stack:
+                        result = self.not_operation(stack.pop(), doc_list)
+                    else:
+                        # apply not if the stack is empty to all the docs
+                        result = self.not_operation(all_docs, doc_list)
+
                     stack.append(result)
                 else:
                     right = stack.pop()
@@ -212,7 +223,7 @@ class Boolean:
                         result = self.and_operation(left, right)
                     elif token == 'OR':
                         result = self.or_operation(left, right)
-                stack.append(result)
+                    stack.append(result)
             else:
                 stack.append(self.inverted_index.get(token.lower(), []))
 
@@ -313,12 +324,12 @@ class Evaluation:
         return relevant_docs
 
     def calculate_recall_precesion(self, retrieved_docs, relevant_docs):
-        # convert the doc ids to integers because they are like '00id' instead of 'id'
+        # Convert both sets of document IDs to integers for comparison
         relevant_set = {int(doc) for doc in relevant_docs}
         retrieved_set = {int(doc) for doc in retrieved_docs}
 
         relevant_retrieved = relevant_set.intersection(retrieved_set)
-        # recall is REL ^ RETR / REL and precision is REL ^ RETR / RETR
+
         recall = len(relevant_retrieved) / len(relevant_set) if relevant_set else 0.0
         precision = len(relevant_retrieved) / len(retrieved_set) if retrieved_set else 0.0
 
@@ -372,7 +383,7 @@ if __name__ == "__main__":
 
     vsm_model = VSM(inverted_weigh_ind, vocabulary, total_docs)
     boolean_model = Boolean(inverted_ind)
-    test_query = " mucolytic and treatment "
+    test_query = " treatment and patients not serum"
     test_result = boolean_model.process_query(test_query)
 
     print("the docs from boolean are: ", test_result)
@@ -386,10 +397,24 @@ if __name__ == "__main__":
 
     evaluation = Evaluation(models, queries, relevant_docs)
 
+    start = timeit.default_timer()
+    for query in queries:
+        boolean_model.process_query(query)
+    boolean_time = timeit.default_timer() - start
+    print(f"Boolean model processing time: {boolean_time:.4f} seconds")
+
+    start = timeit.default_timer()
+    for query in queries:
+        vsm_model.process_query(query)
+    vsm_time = timeit.default_timer() - start
+    print(f"VSM model processing time: {vsm_time:.4f} seconds")
+
     results = evaluation.evaluate_models()
 
-  for model_name, queries in results.items():
+    for model_name, queries in results.items():
         print(f"\nModel: {model_name}")
         for result in queries:
             print(f"Query {result['query_id']}: Precision: {result['precision']}, Recall: {result['recall']}, "
                   f"Retrieved: {result['retrieved_docs']}, Relevant: {result['relevant_docs']}")
+
+
